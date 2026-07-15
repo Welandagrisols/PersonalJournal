@@ -5,6 +5,8 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { JournalProvider } from '@/context/JournalContext';
+import { VaultProvider, useVault } from '@/context/VaultContext';
+import LockScreen from '@/components/LockScreen';
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -19,16 +21,27 @@ SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
+function VaultGate({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, hasPin } = useVault();
+  if (!isAuthenticated) {
+    return <LockScreen />;
+  }
+  return <>{children}</>;
+}
+
 function RootLayoutNav() {
   return (
-    <Stack>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="entry/[id]" options={{ headerShown: false }} />
-      <Stack.Screen
-        name="entry/new"
-        options={{ headerShown: false, presentation: 'modal' }}
-      />
-    </Stack>
+    <VaultGate>
+      <Stack>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="entry/[id]" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="entry/new"
+          options={{ headerShown: false, presentation: 'modal' }}
+        />
+        <Stack.Screen name="vault/photo" options={{ headerShown: false }} />
+      </Stack>
+    </VaultGate>
   );
 }
 
@@ -54,9 +67,11 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView style={{ flex: 1 }}>
             <KeyboardProvider>
-              <JournalProvider>
-                <RootLayoutNav />
-              </JournalProvider>
+              <VaultProvider>
+                <JournalProvider>
+                  <RootLayoutNav />
+                </JournalProvider>
+              </VaultProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>
         </QueryClientProvider>

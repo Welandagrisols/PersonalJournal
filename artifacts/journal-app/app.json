@@ -14,9 +14,15 @@
       "backgroundColor": "#FDF8F3"
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Pages needs access to your photos to add them to your private vault.",
+        "NSPhotoLibraryAddUsageDescription": "Pages needs permission to manage photos in your vault."
+      }
     },
-    "android": {},
+    "android": {
+      "permissions": ["READ_MEDIA_IMAGES", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"]
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },
@@ -28,7 +34,15 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Pages to access your photos.",
+          "savePhotosPermission": "Allow Pages to save photos.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

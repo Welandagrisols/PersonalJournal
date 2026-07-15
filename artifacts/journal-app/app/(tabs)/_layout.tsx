@@ -16,6 +16,10 @@ function NativeTabLayout() {
         <Icon sf={{ default: 'book', selected: 'book.fill' }} />
         <Label>Journal</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="vault">
+        <Icon sf={{ default: 'lock', selected: 'lock.fill' }} />
+        <Label>Vault</Label>
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="calendar">
         <Icon sf={{ default: 'calendar', selected: 'calendar' }} />
         <Label>Calendar</Label>
@@ -60,10 +64,7 @@ function ClassicTabLayout() {
             />
           ) : isWeb ? (
             <View
-              style={[
-                StyleSheet.absoluteFill,
-                { backgroundColor: colors.background },
-              ]}
+              style={[StyleSheet.absoluteFill, { backgroundColor: colors.background }]}
             />
           ) : null,
       }}
@@ -77,6 +78,18 @@ function ClassicTabLayout() {
               <SymbolView name="book" tintColor={color} size={24} />
             ) : (
               <Feather name="book-open" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="vault"
+        options={{
+          title: 'Vault',
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="lock" tintColor={color} size={24} />
+            ) : (
+              <Feather name="lock" size={22} color={color} />
             ),
         }}
       />
