@@ -22,10 +22,16 @@ const GAP = 2;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const CELL_SIZE = (SCREEN_WIDTH - GAP * (NUM_COLS + 1)) / NUM_COLS;
 
+const haptic = async () => {
+  if (Platform.OS !== 'web') {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }
+};
+
 export default function VaultScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { photos, importPhotos, deletePhoto } = useVault();
+  const { photos, importPhotos, deleteFromGallery, deletePhoto } = useVault();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -37,12 +43,30 @@ export default function VaultScreen() {
     setIsImporting(true);
     try {
       const result = await importPhotos();
-      if (result.imported > 0) {
-        const msg =
-          result.deleted > 0
-            ? `${result.imported} photo${result.imported > 1 ? 's' : ''} added to vault and removed from gallery.`
-            : `${result.imported} photo${result.imported > 1 ? 's' : ''} added to vault.`;
-        Alert.alert('Done', msg);
+      if (result.imported === 0) return;
+
+      // Ask user if they want to remove from gallery AFTER copying to vault
+      if (result.assetIds.length > 0 && Platform.OS !== 'web') {
+        Alert.alert(
+          `${result.imported} Photo${result.imported > 1 ? 's' : ''} Added`,
+          'Remove these photos from your gallery? They are already safely stored in your vault.',
+          [
+            {
+              text: 'Keep in Gallery',
+              style: 'cancel',
+            },
+            {
+              text: 'Remove from Gallery',
+              style: 'destructive',
+              onPress: () => deleteFromGallery(result.assetIds),
+            },
+          ],
+        );
+      } else {
+        Alert.alert(
+          'Done',
+          `${result.imported} photo${result.imported > 1 ? 's' : ''} added to vault.`,
+        );
       }
     } finally {
       setIsImporting(false);
@@ -50,7 +74,7 @@ export default function VaultScreen() {
   };
 
   const toggleSelect = async (id: string) => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await haptic();
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -60,8 +84,9 @@ export default function VaultScreen() {
   };
 
   const handleDeleteSelected = () => {
+    const count = selectedIds.size;
     Alert.alert(
-      `Delete ${selectedIds.size} Photo${selectedIds.size > 1 ? 's' : ''}`,
+      `Delete ${count} Photo${count > 1 ? 's' : ''}`,
       'These photos will be permanently deleted from your vault.',
       [
         { text: 'Cancel', style: 'cancel' },
@@ -83,7 +108,7 @@ export default function VaultScreen() {
     if (isSelecting) {
       toggleSelect(id);
     } else {
-      router.push(`/vault/photo?id=${id}` as any);
+      router.push({ pathname: '/vault/photo', params: { id } } as any);
     }
   };
 
@@ -123,7 +148,7 @@ export default function VaultScreen() {
         </View>
       </View>
 
-      {/* Delete bar (when selecting) */}
+      {/* Delete bar when selecting */}
       {isSelecting && (
         <Pressable
           onPress={handleDeleteSelected}
@@ -142,12 +167,15 @@ export default function VaultScreen() {
           <View style={[styles.emptyIcon, { backgroundColor: colors.muted }]}>
             <Ionicons name="images-outline" size={40} color={colors.mutedForeground} />
           </View>
-          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>Your vault is empty</Text>
+          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+            Your vault is empty
+          </Text>
           <Text style={[styles.emptyBody, { color: colors.mutedForeground }]}>
-            Import photos from your gallery to keep them private.{'\n'}They will be removed from your gallery after import.
+            Import photos from your gallery to keep them private. You'll be asked if you want to remove them from your gallery after import.
           </Text>
           <Pressable
             onPress={handleImport}
+            disabled={isImporting}
             style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
           >
             <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
@@ -158,7 +186,7 @@ export default function VaultScreen() {
         <ScrollView
           contentContainerStyle={[
             styles.grid,
-            Platform.OS === 'web' && { paddingBottom: 100 },
+            { paddingBottom: (Platform.OS === 'web' ? 100 : insets.bottom) + 80 },
           ]}
           showsVerticalScrollIndicator={false}
         >
@@ -169,15 +197,11 @@ export default function VaultScreen() {
                 key={photo.id}
                 onPress={() => handlePhotoPress(photo.id)}
                 onLongPress={() => toggleSelect(photo.id)}
-                style={[
-                  styles.cell,
-                  { width: CELL_SIZE, height: CELL_SIZE },
-                  selected && styles.cellSelected,
-                ]}
+                style={[styles.cell, { width: CELL_SIZE, height: CELL_SIZE }]}
               >
                 <Image
                   source={{ uri: photo.uri }}
-                  style={[styles.img, selected && { opacity: 0.6 }]}
+                  style={[styles.img, selected && styles.imgSelected]}
                   resizeMode="cover"
                 />
                 {selected && (
@@ -258,18 +282,17 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: GAP,
     padding: GAP,
-    paddingBottom: 120,
   },
   cell: {
     position: 'relative',
     overflow: 'hidden',
   },
-  cellSelected: {
-    opacity: 0.8,
-  },
   img: {
     width: '100%',
     height: '100%',
+  },
+  imgSelected: {
+    opacity: 0.6,
   },
   checkOverlay: {
     ...StyleSheet.absoluteFillObject,

@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { ActivityIndicator, View } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -22,10 +23,23 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient();
 
 function VaultGate({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, hasPin } = useVault();
+  const { isAuthenticated, pinLoaded } = useVault();
+
+  // Show a plain spinner while we read the PIN from SecureStore.
+  // This prevents the lock screen flashing into "setup" mode for users
+  // who already have a PIN set.
+  if (!pinLoaded) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+
   if (!isAuthenticated) {
     return <LockScreen />;
   }
+
   return <>{children}</>;
 }
 

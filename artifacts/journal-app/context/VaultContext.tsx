@@ -2,10 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { AppState, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
-// expo-media-library has no web support — loaded conditionally at runtime
-// import * as MediaLibrary from 'expo-media-library';
 import type { VaultPhoto } from '@/types/vault';
 
 const PIN_KEY = '@pages/pin';
@@ -14,29 +11,40 @@ const PHOTOS_KEY = '@pages/vault_photos';
 const generateId = () =>
   Date.now().toString() + Math.random().toString(36).substr(2, 9);
 
-const vaultDir =
-  Platform.OS !== 'web' && FileSystem.documentDirectory
-    ? FileSystem.documentDirectory + 'vault/'
-    : null;
+// Lazy-load file-system and media-library — neither has full web support
+async function getFileSystem() {
+  if (Platform.OS === 'web') return null;
+  return import('expo-file-system');
+}
 
-async function ensureVaultDir() {
-  if (!vaultDir) return;
-  const info = await FileSystem.getInfoAsync(vaultDir);
+async function getVaultDir(): Promise<string | null> {
+  const fs = await getFileSystem();
+  if (!fs?.documentDirectory) return null;
+  return fs.documentDirectory + 'vault/';
+}
+
+async function ensureVaultDir(): Promise<string | null> {
+  const fs = await getFileSystem();
+  const dir = await getVaultDir();
+  if (!fs || !dir) return null;
+  const info = await fs.getInfoAsync(dir);
   if (!info.exists) {
-    await FileSystem.makeDirectoryAsync(vaultDir, { intermediates: true });
+    await fs.makeDirectoryAsync(dir, { intermediates: true });
   }
+  return dir;
 }
 
 interface VaultContextValue {
   isAuthenticated: boolean;
   hasPin: boolean;
+  pinLoaded: boolean;
   setupPin: (pin: string) => Promise<void>;
   authenticate: (pin: string) => Promise<boolean>;
   lock: () => void;
   resetPin: () => Promise<void>;
   photos: VaultPhoto[];
-  photosLoaded: boolean;
-  importPhotos: () => Promise<{ imported: number; deleted: number }>;
+  importPhotos: () => Promise<{ imported: number; assetIds: string[] }>;
+  deleteFromGallery: (assetIds: string[]) => Promise<void>;
   deletePhoto: (id: string) => Promise<void>;
   updatePhotoNote: (id: string, note: string) => Promise<void>;
 }
@@ -46,8 +54,8 @@ const VaultContext = createContext<VaultContextValue | null>(null);
 export function VaultProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [hasPin, setHasPin] = useState(false);
+  const [pinLoaded, setPinLoaded] = useState(false);
   const [photos, setPhotos] = useState<VaultPhoto[]>([]);
-  const [photosLoaded, setPhotosLoaded] = useState(false);
   const appStateRef = useRef(AppState.currentState);
 
   useEffect(() => {
@@ -55,7 +63,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       try {
         let pin: string | null = null;
         if (Platform.OS === 'web') {
-          pin = localStorage.getItem(PIN_KEY);
+          pin = typeof localStorage !== 'undefined' ? localStorage.getItem(PIN_KEY) : null;
         } else {
           pin = await SecureStore.getItemAsync(PIN_KEY);
         }
@@ -64,9 +72,9 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
         const raw = await AsyncStorage.getItem(PHOTOS_KEY);
         if (raw) setPhotos(JSON.parse(raw));
       } catch {
-        // ignore
+        // ignore load errors — treat as no PIN set
       } finally {
-        setPhotosLoaded(true);
+        setPinLoaded(true);
       }
     };
     load();
@@ -96,7 +104,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   const authenticate = useCallback(async (pin: string): Promise<boolean> => {
     let stored: string | null = null;
     if (Platform.OS === 'web') {
-      stored = localStorage.getItem(PIN_KEY);
+      stored = typeof localStorage !== 'undefined' ? localStorage.getItem(PIN_KEY) : null;
     } else {
       stored = await SecureStore.getItemAsync(PIN_KEY);
     }
@@ -111,14 +119,18 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
 
   const resetPin = useCallback(async () => {
     if (Platform.OS === 'web') {
-      localStorage.removeItem(PIN_KEY);
+      if (typeof localStorage !== 'undefined') localStorage.removeItem(PIN_KEY);
     } else {
       await SecureStore.deleteItemAsync(PIN_KEY);
     }
-    // Also clear all vault photos
-    if (vaultDir) {
-      try { await FileSystem.deleteAsync(vaultDir, { idempotent: true }); } catch {}
-    }
+    // Delete all vault photo files
+    try {
+      const fs = await getFileSystem();
+      const dir = await getVaultDir();
+      if (fs && dir) {
+        await fs.deleteAsync(dir, { idempotent: true });
+      }
+    } catch {}
     await AsyncStorage.removeItem(PHOTOS_KEY);
     setPhotos([]);
     setHasPin(false);
@@ -129,10 +141,9 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.setItem(PHOTOS_KEY, JSON.stringify(updated));
   }, []);
 
-  const importPhotos = useCallback(async (): Promise<{ imported: number; deleted: number }> => {
-    // Request permissions
+  const importPhotos = useCallback(async (): Promise<{ imported: number; assetIds: string[] }> => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') return { imported: 0, deleted: 0 };
+    if (status !== 'granted') return { imported: 0, assetIds: [] };
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
@@ -141,24 +152,25 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       exif: false,
     });
 
-    if (result.canceled || !result.assets.length) return { imported: 0, deleted: 0 };
+    if (result.canceled || !result.assets.length) return { imported: 0, assetIds: [] };
 
-    await ensureVaultDir();
+    const vaultDir = await ensureVaultDir();
+    const fs = await getFileSystem();
     const newPhotos: VaultPhoto[] = [];
-    const assetIdsToDelete: string[] = [];
+    const collectedAssetIds: string[] = [];
 
     for (const asset of result.assets) {
       const id = generateId();
       let uri = asset.uri;
 
-      if (vaultDir) {
+      if (fs && vaultDir) {
         const ext = asset.uri.split('.').pop()?.split('?')[0] ?? 'jpg';
         const dest = vaultDir + id + '.' + ext;
         try {
-          await FileSystem.copyAsync({ from: asset.uri, to: dest });
+          await fs.copyAsync({ from: asset.uri, to: dest });
           uri = dest;
         } catch {
-          uri = asset.uri;
+          uri = asset.uri; // fall back to original URI
         }
       }
 
@@ -172,37 +184,41 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
         height: asset.height,
       });
 
-      if (asset.assetId) assetIdsToDelete.push(asset.assetId);
+      if (asset.assetId) collectedAssetIds.push(asset.assetId);
     }
 
     const updated = [...photos, ...newPhotos];
     setPhotos(updated);
     await persistPhotos(updated);
 
-    // Offer to delete from gallery (native only)
-    let deleted = 0;
-    if (assetIdsToDelete.length > 0 && Platform.OS !== 'web') {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const MediaLibrary = require('expo-media-library');
-        const { status: delStatus } = await MediaLibrary.requestPermissionsAsync();
-        if (delStatus === 'granted') {
-          await MediaLibrary.deleteAssetsAsync(assetIdsToDelete);
-          deleted = assetIdsToDelete.length;
-        }
-      } catch {
-        // deletion from gallery not supported on this device/platform
-      }
-    }
-
-    return { imported: newPhotos.length, deleted };
+    return { imported: newPhotos.length, assetIds: collectedAssetIds };
   }, [photos, persistPhotos]);
+
+  const deleteFromGallery = useCallback(async (assetIds: string[]) => {
+    if (!assetIds.length || Platform.OS === 'web') return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const MediaLibrary = require('expo-media-library');
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status === 'granted') {
+        await MediaLibrary.deleteAssetsAsync(assetIds);
+      }
+    } catch {
+      // Not supported on this platform/device
+    }
+  }, []);
 
   const deletePhoto = useCallback(
     async (id: string) => {
       const photo = photos.find(p => p.id === id);
-      if (photo && vaultDir && photo.uri.startsWith(vaultDir)) {
-        try { await FileSystem.deleteAsync(photo.uri, { idempotent: true }); } catch {}
+      if (photo && Platform.OS !== 'web') {
+        try {
+          const fs = await getFileSystem();
+          const dir = await getVaultDir();
+          if (fs && dir && photo.uri.startsWith(dir)) {
+            await fs.deleteAsync(photo.uri, { idempotent: true });
+          }
+        } catch {}
       }
       const updated = photos.filter(p => p.id !== id);
       setPhotos(updated);
@@ -225,13 +241,14 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       value={{
         isAuthenticated,
         hasPin,
+        pinLoaded,
         setupPin,
         authenticate,
         lock,
         resetPin,
         photos,
-        photosLoaded,
         importPhotos,
+        deleteFromGallery,
         deletePhoto,
         updatePhotoNote,
       }}

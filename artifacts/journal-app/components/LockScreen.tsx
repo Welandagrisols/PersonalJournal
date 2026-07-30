@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -17,6 +17,15 @@ import { useVault } from '@/context/VaultContext';
 const PIN_LENGTH = 4;
 const KEYPAD = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'];
 
+const haptic = async (type: 'light' | 'error') => {
+  if (Platform.OS === 'web') return;
+  if (type === 'error') {
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+  } else {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }
+};
+
 export default function LockScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -24,7 +33,6 @@ export default function LockScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
 
-  // 'setup' → first entry, 'confirm' → repeat PIN, 'enter' → unlock
   const [phase, setPhase] = useState<'setup' | 'confirm' | 'enter'>(
     hasPin ? 'enter' : 'setup',
   );
@@ -33,6 +41,17 @@ export default function LockScreen() {
   const [error, setError] = useState('');
   const shakeAnim = useRef(new Animated.Value(0)).current;
 
+  // Sync phase when hasPin loads asynchronously from SecureStore
+  useEffect(() => {
+    if (hasPin && (phase === 'setup' || phase === 'confirm')) {
+      setPhase('enter');
+      setPin('');
+      setConfirmPin('');
+      setError('');
+    }
+    // Don't flip back to setup if user just completed PIN creation
+  }, [hasPin]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const shake = useCallback(() => {
     Animated.sequence([
       Animated.timing(shakeAnim, { toValue: 10, duration: 60, useNativeDriver: true }),
@@ -40,7 +59,7 @@ export default function LockScreen() {
       Animated.timing(shakeAnim, { toValue: 10, duration: 60, useNativeDriver: true }),
       Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
     ]).start();
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    haptic('error');
   }, [shakeAnim]);
 
   const handleKey = useCallback(
@@ -53,7 +72,7 @@ export default function LockScreen() {
         return;
       }
 
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await haptic('light');
 
       if (phase === 'confirm') {
         const next = confirmPin + key;
@@ -80,13 +99,11 @@ export default function LockScreen() {
 
       if (next.length === PIN_LENGTH) {
         if (phase === 'setup') {
-          // Move to confirm step
           setTimeout(() => {
             setPhase('confirm');
             setConfirmPin('');
           }, 120);
         } else {
-          // Try to unlock
           const ok = await authenticate(next);
           if (!ok) {
             setError('Incorrect PIN');
@@ -104,12 +121,12 @@ export default function LockScreen() {
 
   const handleReset = () => {
     Alert.alert(
-      'Reset PIN',
-      'This will delete your PIN and ALL vault photos. Your journal entries will remain. Continue?',
+      'Reset Vault',
+      'This will permanently delete your PIN and ALL vault photos. Your journal entries are safe. Continue?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Reset',
+          text: 'Reset Everything',
           style: 'destructive',
           onPress: async () => {
             await resetPin();
