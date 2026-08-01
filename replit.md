@@ -1,6 +1,6 @@
-# [Project name]
+# Journal App
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A mobile journaling app with mood tracking, multiple entry types, and a PIN-protected vault — backed by an Express/PostgreSQL API server.
 
 ## Run & Operate
 
@@ -9,7 +9,7 @@ _Replace the heading above with the project's name, and this line with one sente
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Required env: `SUPABASE_DATABASE_URL` — Supabase Postgres connection string (Settings → Database → Connection string → URI). Falls back to `DATABASE_URL` if set.
 
 ## Stack
 
