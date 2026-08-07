@@ -1,6 +1,6 @@
 -- Pages Supabase schema
 -- Run this in Supabase SQL Editor.
--- Also enable Authentication -> Sign In / Providers -> Anonymous sign-ins.
+-- Enable email/password authentication in Authentication -> Providers.
 
 create table if not exists public.journal_entries (
   id text primary key,

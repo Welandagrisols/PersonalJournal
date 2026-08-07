@@ -9,9 +9,10 @@ import {
   upsertCloudEntry,
   upsertCloudSettings,
 } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 
-const ENTRIES_KEY = '@pages/entries';
-const SETTINGS_KEY = '@pages/settings';
+const LEGACY_ENTRIES_KEY = '@pages/entries';
+const LEGACY_SETTINGS_KEY = '@pages/settings';
 
 const generateId = () =>
   Date.now().toString() + Math.random().toString(36).substr(2, 9);
@@ -77,6 +78,7 @@ interface JournalContextValue {
 const JournalContext = createContext<JournalContextValue | null>(null);
 
 export function JournalProvider({ children }: { children: React.ReactNode }) {
+  const { userId } = useAuth();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [settings, setSettings] = useState<JournalSettings>({ userName: '', theme: 'system' });
   const [isLoaded, setIsLoaded] = useState(false);
@@ -84,22 +86,46 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
     'local' | 'syncing' | 'synced' | 'offline'
   >('local');
 
-  const persistEntries = useCallback(async (updated: JournalEntry[]) => {
-    await AsyncStorage.setItem(ENTRIES_KEY, JSON.stringify(updated));
-  }, []);
+  const persistEntries = useCallback(
+    async (updated: JournalEntry[]) => {
+      if (!userId) return;
+      await AsyncStorage.setItem(`@pages/entries:${userId}`, JSON.stringify(updated));
+    },
+    [userId],
+  );
 
   useEffect(() => {
+    if (!userId) {
+      setEntries([]);
+      setSettings({ userName: '', theme: 'system' });
+      setIsLoaded(false);
+      setCloudSyncStatus('local');
+      return;
+    }
+
+    const entriesKey = `@pages/entries:${userId}`;
+    const settingsKey = `@pages/settings:${userId}`;
     const load = async () => {
       try {
         const [entriesRaw, settingsRaw] = await Promise.all([
-          AsyncStorage.getItem(ENTRIES_KEY),
-          AsyncStorage.getItem(SETTINGS_KEY),
+          AsyncStorage.getItem(entriesKey),
+          AsyncStorage.getItem(settingsKey),
         ]);
+        const legacyEntriesRaw = await AsyncStorage.getItem(LEGACY_ENTRIES_KEY);
+        const legacySettingsRaw = await AsyncStorage.getItem(LEGACY_SETTINGS_KEY);
         const loadedEntries: JournalEntry[] = entriesRaw ? JSON.parse(entriesRaw) : null;
         const loadedSettings: JournalSettings = settingsRaw ? JSON.parse(settingsRaw) : null;
         const localEntries =
-          loadedEntries && loadedEntries.length > 0 ? loadedEntries : buildSeedEntries();
-        const localSettings = loadedSettings ?? { userName: '', theme: 'system' as const };
+          loadedEntries && loadedEntries.length > 0
+            ? loadedEntries
+            : legacyEntriesRaw
+            ? JSON.parse(legacyEntriesRaw)
+            : buildSeedEntries();
+        const localSettings =
+          loadedSettings ??
+          (legacySettingsRaw
+            ? JSON.parse(legacySettingsRaw)
+            : { userName: '', theme: 'system' as const });
 
         setEntries(localEntries);
         setSettings(localSettings);
@@ -108,8 +134,10 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
           await persistEntries(localEntries);
         }
         if (!loadedSettings) {
-          await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(localSettings));
+          await AsyncStorage.setItem(settingsKey, JSON.stringify(localSettings));
         }
+        await AsyncStorage.removeItem(LEGACY_ENTRIES_KEY);
+        await AsyncStorage.removeItem(LEGACY_SETTINGS_KEY);
 
         if (isSupabaseConfigured) {
           setCloudSyncStatus('syncing');
@@ -138,17 +166,17 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
                 new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
             );
             setEntries(mergedEntries);
-            await persistEntries(mergedEntries);
+            await AsyncStorage.setItem(entriesKey, JSON.stringify(mergedEntries));
 
             if (cloudSettings) {
               setSettings(cloudSettings);
-              await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(cloudSettings));
+              await AsyncStorage.setItem(settingsKey, JSON.stringify(cloudSettings));
             } else {
               await upsertCloudSettings(localSettings);
             }
             setCloudSyncStatus('synced');
           } catch {
-            // Supabase is optional until its SQL schema and anonymous auth are enabled.
+            // Supabase is optional until its schema and email authentication are enabled.
             setCloudSyncStatus('offline');
           }
         }
@@ -161,7 +189,7 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
       }
     };
     load();
-  }, [persistEntries]);
+  }, [persistEntries, userId]);
 
   const createEntry = useCallback(
     async (entry: Omit<JournalEntry, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> => {
@@ -181,7 +209,7 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
       }
       return id;
     },
-    [entries, persistEntries],
+    [entries, persistEntries, userId],
   );
 
   const updateEntry = useCallback(
@@ -201,7 +229,7 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [entries, persistEntries],
+    [entries, persistEntries, userId],
   );
 
   const deleteEntry = useCallback(
@@ -218,7 +246,7 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [entries, persistEntries],
+    [entries, persistEntries, userId],
   );
 
   const toggleFavorite = useCallback(
@@ -238,14 +266,16 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [entries, persistEntries],
+    [entries, persistEntries, userId],
   );
 
   const updateSettings = useCallback(
     async (updates: Partial<JournalSettings>) => {
       const updated = { ...settings, ...updates };
       setSettings(updated);
-      await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
+      if (userId) {
+        await AsyncStorage.setItem(`@pages/settings:${userId}`, JSON.stringify(updated));
+      }
       if (isSupabaseConfigured) {
         try {
           await upsertCloudSettings(updated);
@@ -255,7 +285,7 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [settings],
+    [settings, userId],
   );
 
   return (

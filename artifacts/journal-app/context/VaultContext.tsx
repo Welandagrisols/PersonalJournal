@@ -12,9 +12,10 @@ import {
   upsertCloudPhoto,
   uploadVaultPhoto,
 } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 
-const PIN_KEY = '@pages/pin';
-const PHOTOS_KEY = '@pages/vault_photos';
+const LEGACY_PIN_KEY = '@pages/pin';
+const LEGACY_PHOTOS_KEY = '@pages/vault_photos';
 
 const generateId = () =>
   Date.now().toString() + Math.random().toString(36).substr(2, 9);
@@ -69,6 +70,7 @@ interface VaultContextValue {
 const VaultContext = createContext<VaultContextValue | null>(null);
 
 export function VaultProvider({ children }: { children: React.ReactNode }) {
+  const { userId } = useAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [hasPin, setHasPin] = useState(false);
   const [pinLoaded, setPinLoaded] = useState(false);
@@ -76,19 +78,51 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   const appStateRef = useRef(AppState.currentState);
 
   useEffect(() => {
+    if (!userId) {
+      setPhotos([]);
+      setHasPin(false);
+      setIsAuthenticated(false);
+      setPinLoaded(true);
+      return;
+    }
+
+    setPhotos([]);
+    setHasPin(false);
+    setIsAuthenticated(false);
+    setPinLoaded(false);
+    const photosKey = `@pages/vault_photos:${userId}`;
+    const pinKey = `@pages/pin:${userId}`;
     const load = async () => {
       try {
         let pin: string | null = null;
         if (Platform.OS === 'web') {
-          pin = typeof localStorage !== 'undefined' ? localStorage.getItem(PIN_KEY) : null;
+          pin =
+            typeof localStorage !== 'undefined'
+              ? localStorage.getItem(pinKey)
+              : null;
         } else {
-          pin = await SecureStore.getItemAsync(PIN_KEY);
+          pin = await SecureStore.getItemAsync(pinKey);
+          if (!pin) {
+            const legacyPin = await SecureStore.getItemAsync(LEGACY_PIN_KEY);
+            if (legacyPin) {
+              await SecureStore.setItemAsync(pinKey, legacyPin);
+              await SecureStore.deleteItemAsync(LEGACY_PIN_KEY);
+              pin = legacyPin;
+            }
+          }
         }
         setHasPin(!!pin);
 
-        const raw = await AsyncStorage.getItem(PHOTOS_KEY);
-        const localPhotos: VaultPhoto[] = raw ? JSON.parse(raw) : [];
+        const raw = await AsyncStorage.getItem(photosKey);
+        const legacyRaw = await AsyncStorage.getItem(LEGACY_PHOTOS_KEY);
+        const localPhotos: VaultPhoto[] = raw
+          ? JSON.parse(raw)
+          : legacyRaw
+          ? JSON.parse(legacyRaw)
+          : [];
         setPhotos(localPhotos);
+        await AsyncStorage.setItem(photosKey, JSON.stringify(localPhotos));
+        await AsyncStorage.removeItem(LEGACY_PHOTOS_KEY);
 
         if (isSupabaseConfigured) {
           try {
@@ -128,7 +162,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
                   new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
               );
               setPhotos(mergedPhotos);
-              await AsyncStorage.setItem(PHOTOS_KEY, JSON.stringify(mergedPhotos));
+              await AsyncStorage.setItem(photosKey, JSON.stringify(mergedPhotos));
             }
           } catch {
             // Supabase is optional until its schema/storage policies are enabled.
@@ -152,39 +186,48 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       appStateRef.current = nextState;
     });
     return () => sub.remove();
-  }, []);
+  }, [userId]);
 
   const setupPin = useCallback(async (pin: string) => {
+    if (!userId) return;
+    const pinKey = `@pages/pin:${userId}`;
     if (Platform.OS === 'web') {
-      localStorage.setItem(PIN_KEY, pin);
+      localStorage.setItem(pinKey, pin);
     } else {
-      await SecureStore.setItemAsync(PIN_KEY, pin);
+      await SecureStore.setItemAsync(pinKey, pin);
     }
     setHasPin(true);
     setIsAuthenticated(true);
-  }, []);
+  }, [userId]);
 
   const authenticate = useCallback(async (pin: string): Promise<boolean> => {
+    if (!userId) return false;
+    const pinKey = `@pages/pin:${userId}`;
     let stored: string | null = null;
     if (Platform.OS === 'web') {
-      stored = typeof localStorage !== 'undefined' ? localStorage.getItem(PIN_KEY) : null;
+      stored =
+        typeof localStorage !== 'undefined'
+          ? localStorage.getItem(pinKey)
+          : null;
     } else {
-      stored = await SecureStore.getItemAsync(PIN_KEY);
+      stored = await SecureStore.getItemAsync(pinKey);
     }
     if (stored === pin) {
       setIsAuthenticated(true);
       return true;
     }
     return false;
-  }, []);
+  }, [userId]);
 
   const lock = useCallback(() => setIsAuthenticated(false), []);
 
   const resetPin = useCallback(async () => {
+    if (!userId) return;
+    const pinKey = `@pages/pin:${userId}`;
     if (Platform.OS === 'web') {
-      if (typeof localStorage !== 'undefined') localStorage.removeItem(PIN_KEY);
+      if (typeof localStorage !== 'undefined') localStorage.removeItem(pinKey);
     } else {
-      await SecureStore.deleteItemAsync(PIN_KEY);
+      await SecureStore.deleteItemAsync(pinKey);
     }
     // Delete all vault photo files
     try {
@@ -194,15 +237,19 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
         await fs.deleteAsync(dir, { idempotent: true });
       }
     } catch {}
-    await AsyncStorage.removeItem(PHOTOS_KEY);
+    if (userId) {
+      await AsyncStorage.removeItem(`@pages/vault_photos:${userId}`);
+    }
+    await AsyncStorage.removeItem(LEGACY_PHOTOS_KEY);
     setPhotos([]);
     setHasPin(false);
     setIsAuthenticated(false);
-  }, []);
+  }, [userId]);
 
   const persistPhotos = useCallback(async (updated: VaultPhoto[]) => {
-    await AsyncStorage.setItem(PHOTOS_KEY, JSON.stringify(updated));
-  }, []);
+    if (!userId) return;
+    await AsyncStorage.setItem(`@pages/vault_photos:${userId}`, JSON.stringify(updated));
+  }, [userId]);
 
   const importPhotos = useCallback(async (): Promise<{ imported: number; assetIds: string[] }> => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -283,7 +330,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Not supported on this platform/device
     }
-  }, []);
+  }, [userId]);
 
   const deletePhoto = useCallback(
     async (id: string) => {
@@ -309,7 +356,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       setPhotos(updated);
       await persistPhotos(updated);
     },
-    [photos, persistPhotos],
+    [photos, persistPhotos, userId],
   );
 
   const updatePhotoNote = useCallback(
@@ -326,7 +373,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [photos, persistPhotos],
+    [photos, persistPhotos, userId],
   );
 
   return (

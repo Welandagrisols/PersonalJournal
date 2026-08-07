@@ -7,6 +7,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { JournalProvider } from '@/context/JournalContext';
 import { VaultProvider, useVault } from '@/context/VaultContext';
+import { AuthProvider, useAuth } from '@/context/AuthContext';
+import AuthScreen from '@/components/AuthScreen';
 import LockScreen from '@/components/LockScreen';
 import {
   Inter_400Regular,
@@ -43,19 +45,34 @@ function VaultGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const { user, isLoaded } = useAuth();
+  if (!isLoaded) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+  if (!user) return <AuthScreen />;
+  return <>{children}</>;
+}
+
 function RootLayoutNav() {
   return (
-    <VaultGate>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="entry/[id]" options={{ headerShown: false }} />
-        <Stack.Screen
-          name="entry/new"
-          options={{ headerShown: false, presentation: 'modal' }}
-        />
-        <Stack.Screen name="vault/photo" options={{ headerShown: false }} />
-      </Stack>
-    </VaultGate>
+    <AuthGate>
+      <VaultGate>
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="entry/[id]" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="entry/new"
+            options={{ headerShown: false, presentation: 'modal' }}
+          />
+          <Stack.Screen name="vault/photo" options={{ headerShown: false }} />
+        </Stack>
+      </VaultGate>
+    </AuthGate>
   );
 }
 
@@ -81,11 +98,13 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView style={{ flex: 1 }}>
             <KeyboardProvider>
-              <VaultProvider>
-                <JournalProvider>
-                  <RootLayoutNav />
-                </JournalProvider>
-              </VaultProvider>
+              <AuthProvider>
+                <VaultProvider>
+                  <JournalProvider>
+                    <RootLayoutNav />
+                  </JournalProvider>
+                </VaultProvider>
+              </AuthProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>
         </QueryClientProvider>

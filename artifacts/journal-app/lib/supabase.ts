@@ -11,6 +11,11 @@ const SUPABASE_ANON_KEY =
 
 const SESSION_KEY = '@pages/supabase_session';
 
+export interface SupabaseUser {
+  id: string;
+  email?: string;
+}
+
 export const isSupabaseConfigured =
   SUPABASE_URL.startsWith('https://') && SUPABASE_ANON_KEY.length > 20;
 
@@ -18,7 +23,7 @@ interface SupabaseSession {
   access_token: string;
   refresh_token: string;
   expires_in?: number;
-  user?: { id: string };
+  user?: SupabaseUser;
 }
 
 interface JournalRow {
@@ -79,6 +84,10 @@ async function saveSession(session: SupabaseSession | null) {
   }
 }
 
+export async function getStoredSupabaseSession(): Promise<SupabaseSession | null> {
+  return readSession();
+}
+
 async function authRequest(
   path: string,
   body: Record<string, unknown>,
@@ -93,21 +102,37 @@ async function authRequest(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(`Supabase auth failed (${response.status})`);
+    const detail = (await response.json().catch(() => null)) as
+      | { msg?: string; message?: string; error_description?: string }
+      | null;
+    throw new Error(
+      detail?.msg ??
+        detail?.message ??
+        detail?.error_description ??
+        `Supabase auth failed (${response.status})`,
+    );
   }
   const session = (await response.json()) as SupabaseSession;
-  await saveSession(session);
+  if (session.access_token) {
+    await saveSession(session);
+  } else {
+    await saveSession(null);
+  }
   return session;
 }
 
 async function refreshSession(session: SupabaseSession) {
-  if (!session.refresh_token) return authRequest('signup', {});
+  if (!session.refresh_token) {
+    await saveSession(null);
+    throw new Error('Your session has expired. Please sign in again.');
+  }
   try {
     return await authRequest('token?grant_type=refresh_token', {
       refresh_token: session.refresh_token,
     });
   } catch {
-    return authRequest('signup', {});
+    await saveSession(null);
+    throw new Error('Your session has expired. Please sign in again.');
   }
 }
 
@@ -115,7 +140,37 @@ export async function ensureSupabaseSession() {
   requireConfig();
   const stored = await readSession();
   if (stored?.access_token) return stored;
-  return authRequest('signup', {});
+  throw new Error('You must be signed in to sync with Supabase.');
+}
+
+export async function signUpWithPassword(email: string, password: string) {
+  const session = await authRequest('signup', { email, password });
+  return {
+    user: session.user ?? null,
+    needsEmailConfirmation: !session.access_token,
+  };
+}
+
+export async function signInWithPassword(email: string, password: string) {
+  const session = await authRequest('token?grant_type=password', {
+    email,
+    password,
+  });
+  return session.user ?? null;
+}
+
+export async function signOutFromSupabase() {
+  const session = await readSession();
+  if (session?.access_token && isSupabaseConfigured) {
+    await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    }).catch(() => undefined);
+  }
+  await saveSession(null);
 }
 
 async function request<T>(

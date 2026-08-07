@@ -27,7 +27,7 @@ _Populate as you build — short repo map plus pointers to the source-of-truth f
 ## Architecture decisions
 
 - The mobile app is local-first: AsyncStorage remains the offline cache and Supabase is an optional cloud sync layer.
-- Supabase uses anonymous per-device auth with Row Level Security so journal entries, settings, and vault metadata are private to the authenticated device.
+- Supabase uses email/password auth with Row Level Security so journal entries, settings, and vault metadata are private to the signed-in account.
 - Vault images use a private Supabase Storage bucket when cloud upload is available; the native app also keeps a local file copy.
 - The one-time Supabase SQL setup is in `artifacts/journal-app/supabase/schema.sql`. Anonymous sign-ins must also be enabled in Supabase Authentication.
 
@@ -41,7 +41,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-- Run `artifacts/journal-app/supabase/schema.sql` in the Supabase SQL Editor before expecting cloud sync; without it the app intentionally reports offline/local mode.
+- Run `artifacts/journal-app/supabase/schema.sql` in the Supabase SQL Editor before expecting cloud sync; email/password authentication must be enabled in Supabase Authentication.
 - Keep the Supabase anon key client-safe and never put a service-role key in the mobile app.
 
 ## Pointers

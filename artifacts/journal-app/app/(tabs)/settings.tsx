@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { useJournal, calculateStreak } from '@/context/JournalContext';
+import { useAuth } from '@/context/AuthContext';
 
 interface StatCardProps {
   value: string | number;
@@ -33,6 +34,7 @@ export default function SettingsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { entries, settings, updateSettings, deleteEntry, cloudSyncStatus } = useJournal();
+  const { user, signOut } = useAuth();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
   const [nameInput, setNameInput] = useState(settings.userName);
@@ -179,6 +181,23 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/* Account */}
+      <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
+        <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>ACCOUNT</Text>
+        <View style={styles.accountRow}>
+          <View style={[styles.accountIcon, { backgroundColor: colors.primary + '18' }]}>
+            <Ionicons name="mail-outline" size={18} color={colors.primary} />
+          </View>
+          <Text style={[styles.accountEmail, { color: colors.foreground }]} numberOfLines={1}>
+            {user?.email ?? 'Signed in'}
+          </Text>
+        </View>
+        <Pressable onPress={signOut} style={styles.dangerRow}>
+          <Ionicons name="log-out-outline" size={18} color={colors.destructive} />
+          <Text style={[styles.dangerText, { color: colors.destructive }]}>Sign Out</Text>
+        </Pressable>
+      </View>
+
       {/* Danger zone */}
       <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
         <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>DATA</Text>
@@ -311,6 +330,25 @@ const styles = StyleSheet.create({
   dangerText: {
     fontSize: 15,
     fontFamily: 'Inter_500Medium',
+  },
+  accountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  accountIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountEmail: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
   },
   version: {
     textAlign: 'center',

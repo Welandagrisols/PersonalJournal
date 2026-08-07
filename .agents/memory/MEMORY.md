@@ -1,1 +1,1 @@
-- [Supabase sync](supabase-sync.md) — Pages is local-first and only enables cloud sync after the Supabase schema and anonymous auth are configured.
+- [Supabase sync](supabase-sync.md) — Pages uses account-scoped email/password auth; AsyncStorage remains the offline cache.
