@@ -1,6 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { JournalEntry, JournalSettings } from '@/types/journal';
+import {
+  deleteCloudEntry,
+  getCloudSettings,
+  isSupabaseConfigured,
+  listCloudEntries,
+  upsertCloudEntry,
+  upsertCloudSettings,
+} from '@/lib/supabase';
 
 const ENTRIES_KEY = '@pages/entries';
 const SETTINGS_KEY = '@pages/settings';
@@ -58,6 +66,7 @@ interface JournalContextValue {
   entries: JournalEntry[];
   settings: JournalSettings;
   isLoaded: boolean;
+  cloudSyncStatus: 'local' | 'syncing' | 'synced' | 'offline';
   createEntry: (entry: Omit<JournalEntry, 'id' | 'createdAt' | 'updatedAt'>) => Promise<string>;
   updateEntry: (id: string, updates: Partial<Omit<JournalEntry, 'id' | 'createdAt'>>) => Promise<void>;
   deleteEntry: (id: string) => Promise<void>;
@@ -71,6 +80,13 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [settings, setSettings] = useState<JournalSettings>({ userName: '', theme: 'system' });
   const [isLoaded, setIsLoaded] = useState(false);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<
+    'local' | 'syncing' | 'synced' | 'offline'
+  >('local');
+
+  const persistEntries = useCallback(async (updated: JournalEntry[]) => {
+    await AsyncStorage.setItem(ENTRIES_KEY, JSON.stringify(updated));
+  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -81,27 +97,71 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
         ]);
         const loadedEntries: JournalEntry[] = entriesRaw ? JSON.parse(entriesRaw) : null;
         const loadedSettings: JournalSettings = settingsRaw ? JSON.parse(settingsRaw) : null;
-        if (loadedEntries && loadedEntries.length > 0) {
-          setEntries(loadedEntries);
-        } else {
-          const seed = buildSeedEntries();
-          setEntries(seed);
-          await AsyncStorage.setItem(ENTRIES_KEY, JSON.stringify(seed));
+        const localEntries =
+          loadedEntries && loadedEntries.length > 0 ? loadedEntries : buildSeedEntries();
+        const localSettings = loadedSettings ?? { userName: '', theme: 'system' as const };
+
+        setEntries(localEntries);
+        setSettings(localSettings);
+
+        if (!loadedEntries || loadedEntries.length === 0) {
+          await persistEntries(localEntries);
         }
-        if (loadedSettings) setSettings(loadedSettings);
+        if (!loadedSettings) {
+          await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(localSettings));
+        }
+
+        if (isSupabaseConfigured) {
+          setCloudSyncStatus('syncing');
+          try {
+            const [cloudEntries, cloudSettings] = await Promise.all([
+              listCloudEntries(),
+              getCloudSettings(),
+            ]);
+            const mergedById = new Map(cloudEntries.map(entry => [entry.id, entry]));
+            const entriesToUpload: JournalEntry[] = [];
+
+            for (const localEntry of localEntries) {
+              const cloudEntry = mergedById.get(localEntry.id);
+              if (!cloudEntry || localEntry.updatedAt > cloudEntry.updatedAt) {
+                mergedById.set(localEntry.id, localEntry);
+                entriesToUpload.push(localEntry);
+              }
+            }
+
+            if (entriesToUpload.length > 0) {
+              await Promise.all(entriesToUpload.map(upsertCloudEntry));
+            }
+
+            const mergedEntries = Array.from(mergedById.values()).sort(
+              (a, b) =>
+                new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+            );
+            setEntries(mergedEntries);
+            await persistEntries(mergedEntries);
+
+            if (cloudSettings) {
+              setSettings(cloudSettings);
+              await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(cloudSettings));
+            } else {
+              await upsertCloudSettings(localSettings);
+            }
+            setCloudSyncStatus('synced');
+          } catch {
+            // Supabase is optional until its SQL schema and anonymous auth are enabled.
+            setCloudSyncStatus('offline');
+          }
+        }
       } catch {
         const seed = buildSeedEntries();
         setEntries(seed);
+        setCloudSyncStatus('offline');
       } finally {
         setIsLoaded(true);
       }
     };
     load();
-  }, []);
-
-  const persistEntries = useCallback(async (updated: JournalEntry[]) => {
-    await AsyncStorage.setItem(ENTRIES_KEY, JSON.stringify(updated));
-  }, []);
+  }, [persistEntries]);
 
   const createEntry = useCallback(
     async (entry: Omit<JournalEntry, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> => {
@@ -111,6 +171,14 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
       const updated = [newEntry, ...entries];
       setEntries(updated);
       await persistEntries(updated);
+      if (isSupabaseConfigured) {
+        try {
+          await upsertCloudEntry(newEntry);
+          setCloudSyncStatus('synced');
+        } catch {
+          setCloudSyncStatus('offline');
+        }
+      }
       return id;
     },
     [entries, persistEntries],
@@ -123,6 +191,15 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
       );
       setEntries(updated);
       await persistEntries(updated);
+      if (isSupabaseConfigured) {
+        try {
+          const updatedEntry = updated.find(entry => entry.id === id);
+          if (updatedEntry) await upsertCloudEntry(updatedEntry);
+          setCloudSyncStatus('synced');
+        } catch {
+          setCloudSyncStatus('offline');
+        }
+      }
     },
     [entries, persistEntries],
   );
@@ -132,6 +209,14 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
       const updated = entries.filter(e => e.id !== id);
       setEntries(updated);
       await persistEntries(updated);
+      if (isSupabaseConfigured) {
+        try {
+          await deleteCloudEntry(id);
+          setCloudSyncStatus('synced');
+        } catch {
+          setCloudSyncStatus('offline');
+        }
+      }
     },
     [entries, persistEntries],
   );
@@ -143,6 +228,15 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
       );
       setEntries(updated);
       await persistEntries(updated);
+      if (isSupabaseConfigured) {
+        try {
+          const updatedEntry = updated.find(entry => entry.id === id);
+          if (updatedEntry) await upsertCloudEntry(updatedEntry);
+          setCloudSyncStatus('synced');
+        } catch {
+          setCloudSyncStatus('offline');
+        }
+      }
     },
     [entries, persistEntries],
   );
@@ -152,13 +246,31 @@ export function JournalProvider({ children }: { children: React.ReactNode }) {
       const updated = { ...settings, ...updates };
       setSettings(updated);
       await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
+      if (isSupabaseConfigured) {
+        try {
+          await upsertCloudSettings(updated);
+          setCloudSyncStatus('synced');
+        } catch {
+          setCloudSyncStatus('offline');
+        }
+      }
     },
     [settings],
   );
 
   return (
     <JournalContext.Provider
-      value={{ entries, settings, isLoaded, createEntry, updateEntry, deleteEntry, toggleFavorite, updateSettings }}
+      value={{
+        entries,
+        settings,
+        isLoaded,
+        cloudSyncStatus,
+        createEntry,
+        updateEntry,
+        deleteEntry,
+        toggleFavorite,
+        updateSettings,
+      }}
     >
       {children}
     </JournalContext.Provider>

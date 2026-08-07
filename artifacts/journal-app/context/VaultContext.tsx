@@ -4,6 +4,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import * as ImagePicker from 'expo-image-picker';
 import type { VaultPhoto } from '@/types/vault';
+import {
+  deleteCloudPhoto,
+  deleteVaultPhotoFile,
+  isSupabaseConfigured,
+  listCloudPhotos,
+  upsertCloudPhoto,
+  uploadVaultPhoto,
+} from '@/lib/supabase';
 
 const PIN_KEY = '@pages/pin';
 const PHOTOS_KEY = '@pages/vault_photos';
@@ -12,9 +20,18 @@ const generateId = () =>
   Date.now().toString() + Math.random().toString(36).substr(2, 9);
 
 // Lazy-load file-system and media-library — neither has full web support
-async function getFileSystem() {
+type LegacyFileSystem = {
+  documentDirectory?: string | null;
+  getInfoAsync: (uri: string) => Promise<{ exists: boolean }>;
+  makeDirectoryAsync: (uri: string, options?: { intermediates?: boolean }) => Promise<void>;
+  copyAsync: (options: { from: string; to: string }) => Promise<void>;
+  deleteAsync: (uri: string, options?: { idempotent?: boolean }) => Promise<void>;
+};
+
+async function getFileSystem(): Promise<LegacyFileSystem | null> {
   if (Platform.OS === 'web') return null;
-  return import('expo-file-system');
+  const module = await import('expo-file-system');
+  return (module.default ?? module) as unknown as LegacyFileSystem;
 }
 
 async function getVaultDir(): Promise<string | null> {
@@ -70,7 +87,53 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
         setHasPin(!!pin);
 
         const raw = await AsyncStorage.getItem(PHOTOS_KEY);
-        if (raw) setPhotos(JSON.parse(raw));
+        const localPhotos: VaultPhoto[] = raw ? JSON.parse(raw) : [];
+        setPhotos(localPhotos);
+
+        if (isSupabaseConfigured) {
+          try {
+            const cloudPhotos = await listCloudPhotos();
+            if (cloudPhotos.length === 0) {
+              await Promise.all(
+                localPhotos.map(async photo => {
+                  let storagePath: string | null = null;
+                  try {
+                    storagePath = await uploadVaultPhoto(photo.uri, photo.id);
+                  } catch {
+                    // Keep the local-only copy if cloud upload is unavailable.
+                  }
+                  await upsertCloudPhoto({ ...photo, storagePath: storagePath ?? undefined });
+                }),
+              );
+            } else {
+              const mergedById = new Map(cloudPhotos.map(photo => [photo.id, photo]));
+              for (const localPhoto of localPhotos) {
+                const cloudPhoto = mergedById.get(localPhoto.id);
+                if (!cloudPhoto) {
+                  mergedById.set(localPhoto.id, localPhoto);
+                  try {
+                    const storagePath = await uploadVaultPhoto(localPhoto.uri, localPhoto.id);
+                    await upsertCloudPhoto({ ...localPhoto, storagePath: storagePath ?? undefined });
+                  } catch {
+                    await upsertCloudPhoto(localPhoto);
+                  }
+                } else if (localPhoto.note !== cloudPhoto.note) {
+                  // Notes edited on this device remain available offline.
+                  mergedById.set(localPhoto.id, { ...cloudPhoto, note: localPhoto.note });
+                  await upsertCloudPhoto({ ...cloudPhoto, ...localPhoto });
+                }
+              }
+              const mergedPhotos = Array.from(mergedById.values()).sort(
+                (a, b) =>
+                  new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+              );
+              setPhotos(mergedPhotos);
+              await AsyncStorage.setItem(PHOTOS_KEY, JSON.stringify(mergedPhotos));
+            }
+          } catch {
+            // Supabase is optional until its schema/storage policies are enabled.
+          }
+        }
       } catch {
         // ignore load errors — treat as no PIN set
       } finally {
@@ -191,6 +254,20 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     setPhotos(updated);
     await persistPhotos(updated);
 
+    // Upload in the background so importing remains fast on mobile.
+    if (isSupabaseConfigured) {
+      void Promise.all(
+        newPhotos.map(async photo => {
+          try {
+            const storagePath = await uploadVaultPhoto(photo.uri, photo.id);
+            await upsertCloudPhoto({ ...photo, storagePath: storagePath ?? undefined });
+          } catch {
+            // The local vault remains the source of truth while offline.
+          }
+        }),
+      );
+    }
+
     return { imported: newPhotos.length, assetIds: collectedAssetIds };
   }, [photos, persistPhotos]);
 
@@ -211,6 +288,14 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   const deletePhoto = useCallback(
     async (id: string) => {
       const photo = photos.find(p => p.id === id);
+      if (isSupabaseConfigured && photo) {
+        try {
+          if (photo.storagePath) await deleteVaultPhotoFile(photo.storagePath);
+          await deleteCloudPhoto(id);
+        } catch {
+          // Continue deleting the local copy even if cloud sync is unavailable.
+        }
+      }
       if (photo && Platform.OS !== 'web') {
         try {
           const fs = await getFileSystem();
@@ -232,6 +317,14 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       const updated = photos.map(p => (p.id === id ? { ...p, note } : p));
       setPhotos(updated);
       await persistPhotos(updated);
+      if (isSupabaseConfigured) {
+        try {
+          const updatedPhoto = updated.find(photo => photo.id === id);
+          if (updatedPhoto) await upsertCloudPhoto(updatedPhoto);
+        } catch {
+          // The note is safely persisted locally.
+        }
+      }
     },
     [photos, persistPhotos],
   );

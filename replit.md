@@ -26,11 +26,14 @@ _Populate as you build — short repo map plus pointers to the source-of-truth f
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The mobile app is local-first: AsyncStorage remains the offline cache and Supabase is an optional cloud sync layer.
+- Supabase uses anonymous per-device auth with Row Level Security so journal entries, settings, and vault metadata are private to the authenticated device.
+- Vault images use a private Supabase Storage bucket when cloud upload is available; the native app also keeps a local file copy.
+- The one-time Supabase SQL setup is in `artifacts/journal-app/supabase/schema.sql`. Anonymous sign-ins must also be enabled in Supabase Authentication.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+Pages is a warm, PIN-protected personal journal with multiple entry types, mood tracking, calendar browsing, and a private photo vault. Entries and vault metadata can sync to Supabase while remaining usable offline.
 
 ## User preferences
 
@@ -38,7 +41,8 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Run `artifacts/journal-app/supabase/schema.sql` in the Supabase SQL Editor before expecting cloud sync; without it the app intentionally reports offline/local mode.
+- Keep the Supabase anon key client-safe and never put a service-role key in the mobile app.
 
 ## Pointers
 

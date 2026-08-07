@@ -32,7 +32,7 @@ function StatCard({ value, label }: StatCardProps) {
 export default function SettingsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { entries, settings, updateSettings, deleteEntry } = useJournal();
+  const { entries, settings, updateSettings, deleteEntry, cloudSyncStatus } = useJournal();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
   const [nameInput, setNameInput] = useState(settings.userName);
@@ -153,6 +153,30 @@ export default function SettingsScreen() {
             )}
           </Pressable>
         ))}
+      </View>
+
+      {/* Cloud sync */}
+      <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
+        <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>CLOUD SYNC</Text>
+        <View style={styles.themeRow}>
+          <View style={styles.themeLeft}>
+            <Ionicons name="cloud-outline" size={18} color={colors.foreground} />
+            <Text style={[styles.themeLabel, { color: colors.foreground }]}>
+              {cloudSyncStatus === 'synced'
+                ? 'Synced with Supabase'
+                : cloudSyncStatus === 'syncing'
+                ? 'Syncing…'
+                : cloudSyncStatus === 'offline'
+                ? 'Offline — local storage active'
+                : 'Local storage'}
+            </Text>
+          </View>
+          <Ionicons
+            name={cloudSyncStatus === 'synced' ? 'checkmark-circle' : 'ellipse-outline'}
+            size={20}
+            color={cloudSyncStatus === 'synced' ? colors.accent : colors.mutedForeground}
+          />
+        </View>
       </View>
 
       {/* Danger zone */}

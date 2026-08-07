@@ -6,4 +6,5 @@ export interface VaultPhoto {
   note: string;
   width?: number;
   height?: number;
+  storagePath?: string;
 }
