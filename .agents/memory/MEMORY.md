@@ -1,1 +1,2 @@
 - [Supabase sync](supabase-sync.md) — Pages uses account-scoped email/password auth; AsyncStorage remains the offline cache.
+- [Gemini composer](gemini-composer.md) — Keep journal AI server-side and authenticated; current web answers need a separate source-aware flow.

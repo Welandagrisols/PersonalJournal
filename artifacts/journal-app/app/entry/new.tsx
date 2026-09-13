@@ -19,6 +19,7 @@ import { ENTRY_TYPES, getEntryTypeConfig } from '@/constants/entryTypes';
 import { MOODS } from '@/constants/moods';
 import { getDailyPrompt } from '@/constants/prompts';
 import type { EntryType } from '@/types/journal';
+import AIComposer from '@/components/AIComposer';
 
 export default function NewEntryScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -38,6 +39,7 @@ export default function NewEntryScreen() {
   const [tagsInput, setTagsInput] = useState('');
   const [gratitudeItems, setGratitudeItems] = useState<string[]>(['', '', '']);
   const [isSaving, setIsSaving] = useState(false);
+  const [showAIComposer, setShowAIComposer] = useState(false);
 
   useEffect(() => {
     if (id && entries.length > 0 && !initialized.current) {
@@ -259,6 +261,36 @@ export default function NewEntryScreen() {
               value={body}
               onChangeText={setBody}
             />
+            <View style={styles.aiRow}>
+              <Text style={[styles.aiHint, { color: colors.mutedForeground }]}>
+                Need help finding the words?
+              </Text>
+              <Pressable
+                onPress={() => setShowAIComposer(true)}
+                disabled={!body.trim() && !title.trim()}
+                style={[
+                  styles.aiButton,
+                  {
+                    backgroundColor: body.trim() || title.trim() ? colors.secondary : colors.muted,
+                    borderColor: colors.border,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name="sparkles-outline"
+                  size={15}
+                  color={body.trim() || title.trim() ? colors.primary : colors.mutedForeground}
+                />
+                <Text
+                  style={[
+                    styles.aiButtonText,
+                    { color: body.trim() || title.trim() ? colors.primary : colors.mutedForeground },
+                  ]}
+                >
+                  Writing companion
+                </Text>
+              </Pressable>
+            </View>
           </View>
         )}
 
@@ -275,6 +307,17 @@ export default function NewEntryScreen() {
           />
         </View>
       </ScrollView>
+      <AIComposer
+        visible={showAIComposer}
+        initialText={body || title}
+        initialTitle={title}
+        onClose={() => setShowAIComposer(false)}
+        onApply={({ body: nextBody, title: nextTitle, tags }) => {
+          setBody(nextBody);
+          if (nextTitle) setTitle(nextTitle);
+          if (tags?.length) setTagsInput(tags.join(', '));
+        }}
+      />
     </View>
   );
 }
@@ -397,6 +440,24 @@ const styles = StyleSheet.create({
     lineHeight: 28,
     minHeight: 200,
   },
+  aiRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingTop: 12,
+  },
+  aiHint: { flex: 1, fontSize: 12, fontFamily: 'Inter_400Regular' },
+  aiButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  aiButtonText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
   tagsField: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: gemini
+    description: Private AI writing assistance
 paths:
   /healthz:
     get:
@@ -24,7 +26,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /gemini/compose:
+    post:
+      operationId: composeWithGemini
+      tags: [gemini]
+      summary: Generate private writing assistance
+      description: Uses Gemini to polish, continue, or reflect on journal writing.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeminiComposeRequest"
+      responses:
+        "200":
+          description: Generated writing assistance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeminiComposeResponse"
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "413":
+          description: Request is too large
+        "503":
+          description: AI service is not configured
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +68,43 @@ components:
           type: string
       required:
         - status
+    GeminiComposeRequest:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [polish, story, metadata, reflect]
+        text:
+          type: string
+          minLength: 1
+          maxLength: 12000
+        title:
+          type: string
+          maxLength: 240
+        instruction:
+          type: string
+          maxLength: 1000
+        context:
+          type: string
+          maxLength: 4000
+      required:
+        - operation
+        - text
+    GeminiComposeResponse:
+      type: object
+      properties:
+        result:
+          type: string
+        title:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        questions:
+          type: array
+          items:
+            type: string
+      required:
+        - result
 

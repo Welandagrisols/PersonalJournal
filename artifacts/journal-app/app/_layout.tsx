@@ -19,10 +19,17 @@ import {
 } from '@expo-google-fonts/inter';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { setAuthTokenGetter, setBaseUrl } from '@workspace/api-client-react';
+import { getStoredSupabaseSession } from '@/lib/supabase';
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
+
+if (process.env.EXPO_PUBLIC_DOMAIN) {
+  setBaseUrl(`https://${process.env.EXPO_PUBLIC_DOMAIN}`);
+}
+setAuthTokenGetter(async () => (await getStoredSupabaseSession())?.access_token ?? null);
 
 function VaultGate({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, pinLoaded } = useVault();
