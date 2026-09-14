@@ -1,3 +1,4 @@
 - [Supabase sync](supabase-sync.md) — Pages uses account-scoped email/password auth; AsyncStorage remains the offline cache.
 - [Gemini composer](gemini-composer.md) — Keep journal AI server-side and authenticated; current web answers need a separate source-aware flow.
 - [Supabase Replit connectivity](supabase-connectivity.md) — Use the active project's session pooler URI; direct database host DNS may fail from Replit.
+- [Expo build port conflict](expo-build-port.md) — Stop the component preview workflow before the static Expo build because the build script assumes Metro port 8081.

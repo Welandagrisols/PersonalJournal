@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Platform,
   Pressable,
   ScrollView,
@@ -9,23 +10,36 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { useJournal } from '@/context/JournalContext';
+import { useAuth } from '@/context/AuthContext';
 import { ENTRY_TYPES, getEntryTypeConfig } from '@/constants/entryTypes';
 import { MOODS } from '@/constants/moods';
 import { getDailyPrompt } from '@/constants/prompts';
 import type { EntryType } from '@/types/journal';
 import AIComposer from '@/components/AIComposer';
 
+interface EntryDraft {
+  type: EntryType;
+  title: string;
+  body: string;
+  mood: string;
+  tagsInput: string;
+  gratitudeItems: string[];
+  savedAt: string;
+}
+
 export default function NewEntryScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const isEditing = !!id;
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { userId } = useAuth();
   const { entries, createEntry, updateEntry } = useJournal();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
@@ -40,24 +54,94 @@ export default function NewEntryScreen() {
   const [gratitudeItems, setGratitudeItems] = useState<string[]>(['', '', '']);
   const [isSaving, setIsSaving] = useState(false);
   const [showAIComposer, setShowAIComposer] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const draftLoaded = useRef(false);
+  const draftRef = useRef<EntryDraft | null>(null);
+  const draftKey = userId ? `@pages/draft:${userId}:${id ?? 'new'}` : null;
+
+  const currentDraft = (): EntryDraft => ({
+    type,
+    title,
+    body,
+    mood,
+    tagsInput,
+    gratitudeItems,
+    savedAt: new Date().toISOString(),
+  });
 
   useEffect(() => {
-    if (id && entries.length > 0 && !initialized.current) {
-      initialized.current = true;
-      const entry = entries.find(e => e.id === id);
-      if (entry) {
-        setType(entry.type);
-        setTitle(entry.title);
-        setBody(entry.body);
-        setMood(entry.mood);
-        setTagsInput(entry.tags.join(', '));
-        if (entry.gratitudeItems) {
-          const items = [...entry.gratitudeItems, '', '', ''].slice(0, 3);
-          setGratitudeItems(items);
+    if (!userId || (isEditing && entries.length === 0) || draftLoaded.current) return;
+
+    let cancelled = false;
+    const loadDraft = async () => {
+      if (isEditing && id && !initialized.current) {
+        initialized.current = true;
+        const entry = entries.find(e => e.id === id);
+        if (entry) {
+          setType(entry.type);
+          setTitle(entry.title);
+          setBody(entry.body);
+          setMood(entry.mood);
+          setTagsInput(entry.tags.join(', '));
+          if (entry.gratitudeItems) {
+            const items = [...entry.gratitudeItems, '', '', ''].slice(0, 3);
+            setGratitudeItems(items);
+          }
         }
       }
-    }
-  }, [id, entries]);
+
+      if (!draftKey) return;
+      try {
+        const raw = await AsyncStorage.getItem(draftKey);
+        if (!raw || cancelled) return;
+        const draft = JSON.parse(raw) as Partial<EntryDraft>;
+        if (draft.type) setType(draft.type);
+        if (typeof draft.title === 'string') setTitle(draft.title);
+        if (typeof draft.body === 'string') setBody(draft.body);
+        if (typeof draft.mood === 'string') setMood(draft.mood);
+        if (typeof draft.tagsInput === 'string') setTagsInput(draft.tagsInput);
+        if (Array.isArray(draft.gratitudeItems)) setGratitudeItems(draft.gratitudeItems);
+        setDraftRestored(true);
+      } catch {
+        // A malformed local draft should not prevent the editor from opening.
+      } finally {
+        if (!cancelled) draftLoaded.current = true;
+      }
+    };
+
+    void loadDraft();
+    return () => {
+      cancelled = true;
+    };
+  }, [draftKey, entries, id, isEditing, userId]);
+
+  useEffect(() => {
+    if (!draftKey || !draftLoaded.current) return;
+    const draft = currentDraft();
+    draftRef.current = draft;
+    const timer = setTimeout(() => {
+      void AsyncStorage.setItem(draftKey, JSON.stringify(draft)).catch(() => {});
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [body, draftKey, gratitudeItems, mood, tagsInput, title, type]);
+
+  useEffect(() => {
+    if (!draftKey) return;
+    const persistCurrentDraft = () => {
+      const draft = draftRef.current;
+      if (!draft) return;
+      void AsyncStorage.setItem(draftKey, JSON.stringify(draft)).catch(() => {});
+    };
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        persistCurrentDraft();
+      }
+    });
+    return () => {
+      subscription.remove();
+      persistCurrentDraft();
+    };
+  }, [draftKey]);
 
   const typeConfig = getEntryTypeConfig(type);
 
@@ -90,6 +174,7 @@ export default function NewEntryScreen() {
       } else {
         await createEntry(payload);
       }
+      if (draftKey) await AsyncStorage.removeItem(draftKey);
       router.back();
     } finally {
       setIsSaving(false);
@@ -140,6 +225,15 @@ export default function NewEntryScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {draftRestored ? (
+          <View style={[styles.draftNotice, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+            <Ionicons name="cloud-download-outline" size={16} color={colors.primary} />
+            <Text style={[styles.draftNoticeText, { color: colors.secondaryForeground }]}>
+              Your unsaved draft was restored
+            </Text>
+          </View>
+        ) : null}
+
         {/* Type selector */}
         <View style={styles.typeSection}>
           <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>Entry type</Text>
@@ -335,6 +429,20 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 16,
     fontFamily: 'Inter_600SemiBold',
+  },
+  draftNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginBottom: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  draftNoticeText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
   },
   saveBtn: {
     paddingHorizontal: 16,
