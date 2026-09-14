@@ -144,6 +144,16 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
     EXPO_PUBLIC_REPL_ID: expoPublicReplId,
   };
 
+  // Expo only exposes EXPO_PUBLIC_* values to the client bundle. Keep the
+  // Supabase URL and anon key sourced from Replit Secrets for production
+  // builds, just as the development workflow does.
+  if (!env.EXPO_PUBLIC_SUPABASE_URL && env.SUPABASE_URL) {
+    env.EXPO_PUBLIC_SUPABASE_URL = env.SUPABASE_URL;
+  }
+  if (!env.EXPO_PUBLIC_SUPABASE_ANON_KEY && env.SUPABASE_ANON_KEY) {
+    env.EXPO_PUBLIC_SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY;
+  }
+
   if (expoPublicReplId) {
     console.log(`Setting EXPO_PUBLIC_REPL_ID=${expoPublicReplId}`);
   }
