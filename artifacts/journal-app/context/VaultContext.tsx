@@ -14,7 +14,7 @@ import {
 } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 
-const LEGACY_PIN_KEY = '@pages/pin';
+const LEGACY_PIN_KEY = 'pages_pin_legacy';
 const LEGACY_PHOTOS_KEY = '@pages/vault_photos';
 
 const generateId = () =>

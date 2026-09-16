@@ -9,7 +9,7 @@ const SUPABASE_ANON_KEY =
   process.env.SUPABASE_ANON_KEY ??
   '';
 
-const SESSION_KEY = '@pages/supabase_session';
+const SESSION_KEY = 'pages_supabase_session';
 
 export interface SupabaseUser {
   id: string;
