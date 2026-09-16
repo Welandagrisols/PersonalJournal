@@ -91,7 +91,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     setIsAuthenticated(false);
     setPinLoaded(false);
     const photosKey = `@pages/vault_photos:${userId}`;
-    const pinKey = `@pages/pin:${userId}`;
+    const pinKey = `pages_pin_${userId}`;
     const load = async () => {
       try {
         let pin: string | null = null;
@@ -190,7 +190,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
 
   const setupPin = useCallback(async (pin: string) => {
     if (!userId) return;
-    const pinKey = `@pages/pin:${userId}`;
+    const pinKey = `pages_pin_${userId}`;
     if (Platform.OS === 'web') {
       localStorage.setItem(pinKey, pin);
     } else {
@@ -202,7 +202,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
 
   const authenticate = useCallback(async (pin: string): Promise<boolean> => {
     if (!userId) return false;
-    const pinKey = `@pages/pin:${userId}`;
+    const pinKey = `pages_pin_${userId}`;
     let stored: string | null = null;
     if (Platform.OS === 'web') {
       stored =
@@ -223,7 +223,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
 
   const resetPin = useCallback(async () => {
     if (!userId) return;
-    const pinKey = `@pages/pin:${userId}`;
+    const pinKey = `pages_pin_${userId}`;
     if (Platform.OS === 'web') {
       if (typeof localStorage !== 'undefined') localStorage.removeItem(pinKey);
     } else {
